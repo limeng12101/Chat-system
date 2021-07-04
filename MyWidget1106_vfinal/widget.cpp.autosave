@@ -1,0 +1,232 @@
+#include "widget.h"
+#include "ui_widget.h"
+
+Widget::Widget(QString name,QWidget *parent) :
+    QWidget(parent),nickName(name),
+    status(false),
+    pf(NULL),//初始化完成
+    pbrow(NULL),
+    ui(new Ui::Widget)
+{
+    ui->setupUi(this);
+    setAttribute(Qt::WA_DeleteOnClose);
+    //保证窗口能够立刻销毁 调用析构函数发送下线消息
+    pbrow = BrowManager::getInstance();//初始化一个表情管理的类对象
+    pbrow->BrowManagerMap();//初始化map容器
+    this->InitNetWork();
+    this->loadFriends();
+    this->showOfflineFriends();
+
+}
+
+Widget::~Widget()
+{
+    delete ui;
+    pnet->sendData(NetWork::OFFLINE);
+    pbrow->releaseInstance();
+    pnet->releaseInstance();
+}
+
+void Widget::reg_test()
+{
+    QString s1 = "床前明月光<@brow1>疑是地上霜<@brow2>"
+                 "举头望明月<@brow3>低头思故乡<@brow4>";
+    QRegExp regExp = QRegExp("<@brow\\d+>");
+    int pos = 0;
+    vector<QString>v;
+    while((pos = regExp.indexIn(s1,pos))!=-1){
+        qDebug() << pos;
+        v.push_back(regExp.cap(0));
+        pos+=regExp.matchedLength();
+        qDebug() << "______" << pos;
+    }
+    QString str;
+    int num=1;
+    for(int i=0;i<v.size();i++){
+        //<img src:/new/prefix1/imgs/brow1.jpg width=30 height=30>
+        str = QString("<img src=:/new/prefix1/imgs/brow%1.jpg height=30 width=30>")
+                .arg(num++);
+        qDebug() << str;
+        s1.replace(v[i],str);
+    }
+    ui->textBrowser->insertHtml(s1);
+}
+
+void Widget::InitNetWork()
+{
+    pnet = NetWork::getInstance();
+    //添加昵称和IP
+    pnet->setNickName(nickName);
+    ui->comboBox->addItems(pnet->getIps());
+    //信号与槽函数的链接
+    connect(pnet,&NetWork::msgdata,
+            this,&Widget::dealmsgdata);
+    connect(pnet,&NetWork::online,
+            this,&Widget::dealonline);
+    connect(pnet,&NetWork::offline,
+            this,&Widget::dealoffline);
+    //添加上线信息
+    pnet->sendData(NetWork::ONLINE);
+}
+
+void Widget::on_toolButton_clicked()
+{
+    //如果表情控件没有被点开 那么点开
+    if(status == false){
+        if(pf == NULL){
+            pf = new MyForm(this);//创建表情的控件
+            // pf->setParent(this);
+            //指定父部件
+            connect(pf,&MyForm::MySignal,
+                    this,&Widget::dealSignal);//需要实现一个槽函数
+
+            QPoint p = ui->toolButton->pos();
+            p += QPoint(-30,-70);
+            pf->move(p);
+        }
+
+        pf->show();
+        status = true;
+    }
+    //否则关闭
+    else{
+        pf->hide();
+        status = false;
+    }
+}
+
+void Widget::dealSignal(QString str)
+{
+    // <@brow1>
+    // "<img src=:/new/prefix1/imgs/brow1.jpg height=30 width=30>";
+
+    //存储相应的表情到StringList中
+    pbrow->addInputBrows(str);
+    //先获取TextEdit上的内容
+    QString temp = ui->textEdit->toPlainText();
+    //qDebug() << "********* " <<temp ;
+    QString html =  pbrow->addBrowsAsHtml(temp);
+    //qDebug() << "********* " <<html ;
+    ui->textEdit->setHtml(html);
+    //setHtml是个普通方法，调用时，参数内容按html文本处理，
+    //将解析后的内容显示在编辑器中
+    ui->textEdit->moveCursor(QTextCursor::EndOfLine);
+    //设置光标的位置
+}
+//(2)
+void Widget::on_pushButton_clicked()
+{
+    //获取textEdit上的内容  你好？
+    QString str1 = ui->textEdit->toPlainText();
+
+    //从textEdit得到的字符串表情都被处理成整数65532
+    //你好？？
+    QString send =pbrow->addBrows(str1);
+    //send 你好<@brow1><@brow2>
+    pbrow->clearInputBrows();
+    ui->textEdit->clear();
+
+    //将temp设置到TextBrower上
+    //    ui->textBrowser->insertHtml(pbrow->StringtoHtml(send));
+    //    ui->textBrowser->append("");
+    //    ui->textEdit->moveCursor(QTextCursor::EndOfLine);
+
+    //保证在局域网内发送
+    pnet->sendData(NetWork::MSGDATA,send);//MSGDATA <@brow1>
+}
+
+void Widget::dealmsgdata(QString nickName, QString ip, QString msg)
+{
+    ui->textBrowser->append(QString("[%1 %2]")
+                            .arg(nickName)
+                            .arg(ip));
+    ui->textBrowser->append("");
+    ui->textBrowser->insertHtml(pbrow->StringtoHtml(msg));
+    ui->textBrowser->append("");
+    ui->textEdit->moveCursor(QTextCursor::EndOfLine);
+
+}
+
+void Widget::dealoffline(QString name, QString ip)
+{
+    ui->listWidget->clear();
+    addOfflineFriend(name, ip);
+    removeOnlineFriend(name, ip);
+    showOnlineFriends();
+    showOfflineFriends();
+}
+
+void Widget::dealonline(QString name, QString ip)
+{
+    //好友列表里没有好友，发送在线信息
+    if(onlineFriends.find(QString("%1(%2)")
+                          .arg(name)
+                          .arg(ip)) == onlineFriends.end() &&
+            ip != hostIp)
+    {
+
+        pnet->sendData(NetWork::ONLINE);
+    }
+    ui->listWidget->clear();
+    addOnlineFriend(name, ip);
+    removeOfflineFriend(name, ip);
+    showOnlineFriends();
+    showOfflineFriends();
+}
+
+void Widget::on_comboBox_currentTextChanged(const QString &ip)
+{
+    if(pnet != 0)
+    {
+        hostIp = ip;//记录当前的IP地址
+        pnet->setIp(ip);
+    }
+}
+
+void Widget::addOnlineFriend(QString name, QString ip)
+{
+    onlineFriends.insert(QString("%1(%2)").arg(name).arg(ip));
+    Daofactory::getInstance()->getFriendDao()->addFriend(FriendEntity(name, ip));
+}
+
+void Widget::addOfflineFriend(QString name, QString ip)
+{
+    offlineFriends.insert(QString("%1(%2)").arg(name).arg(ip));
+}
+void Widget::removeOnlineFriend(QString name, QString ip)
+{
+
+    onlineFriends.erase(QString("%1(%2)").arg(name).arg(ip));
+}
+
+void Widget::removeOfflineFriend(QString name, QString ip)
+{
+
+    offlineFriends.erase(QString("%1(%2)").arg(name).arg(ip));
+}
+void Widget::showOnlineFriends()
+{
+
+    for(set<QString>::iterator iter = onlineFriends.begin();iter != onlineFriends.end();iter++)
+    {
+        C->listWidget->addItem(*iter);
+    }
+}
+
+void Widget::loadFriends(){
+    vector<FriendEntity> v;
+    Daofactory::getInstance()->getFriendDao()->selectFriends(v);
+    for(vector<FriendEntity>::iterator iter = v.begin();iter != v.end();iter++)
+    {
+        QString data = QString("%1(%2)").arg(iter->m_name).arg(iter->m_ip);
+        offlineFriends.insert(data);
+    }
+}
+
+
+void Widget::showOfflineFriends(){
+    for(set<QString>::iterator iter = offlineFriends.begin();iter != offlineFriends.end();iter++)
+    {
+        ui->listWidget->addItem(*iter+"  离线");
+    }
+}

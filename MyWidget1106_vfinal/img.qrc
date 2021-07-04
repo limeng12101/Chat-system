@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/new/prefix1">
+        <file>imgs/brow1.jpg</file>
+        <file>imgs/brow2.jpg</file>
+        <file>imgs/brow3.jpg</file>
+        <file>imgs/brow4.jpg</file>
+        <file>imgs/brow5.jpg</file>
+    </qresource>
+</RCC>
